@@ -1,0 +1,6 @@
+*.pkl
+*.model
+*.vocab
+*.txt
+*.pth
+data/
