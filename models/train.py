@@ -7,6 +7,7 @@ from torch.utils.data import DataLoader
 from tqdm import tqdm
 from torch.optim.lr_scheduler import ReduceLROnPlateau
 import pickle
+import mlflow
 
 def padding(index_list, max_len):
     if len(index_list) < max_len:
@@ -113,86 +114,92 @@ if __name__ == "__main__":
         collate_fn=batch
     )
 
-    for epoch in range(epochs):
-        total_loss = 0
-        num_batches = 0
-        train_correct_tokens = 0
-        train_total_tokens = 0
-        for encoder_tensor, decoder_tensor, target_tensor in tqdm(train_loader, desc=f"Epoch {epoch+1}"):
-            encoder_tensor = encoder_tensor.to(device)
-            decoder_tensor = decoder_tensor.to(device)
-            target_tensor = target_tensor.to(device)
-
-            output = model(encoder_tensor,decoder_tensor)
-
-            batch_size = output.shape[0]
-            token_size = output.shape[1]
-            vocab_size = output.shape[2]
-
-            output_flat = output.view(batch_size*token_size, vocab_size)
-            target_flat = target_tensor.view(batch_size * token_size)
-
-            loss = loss_fn(output_flat, target_flat)
-            optimizer.zero_grad()
-            loss.backward()
-            optimizer.step()
-
-            preds = output_flat.argmax(dim=1)
-            mask = target_flat != PAD_ID
-            train_correct_tokens += (preds == target_flat).masked_select(mask).sum().item()
-            train_total_tokens += mask.sum().item()
-            total_loss += loss.item()
-            num_batches += 1
-        avg_loss = total_loss / num_batches
-        print(f"Epoch {epoch+1}, Average Loss: {avg_loss:.4f}")
-        train_accuracy = 100 * train_correct_tokens / train_total_tokens
-        print(f"Epoch {epoch+1}, Train Loss: {avg_loss:.4f}, Train Accuracy: {train_accuracy:.2f}%")
-
-        model.eval()
-        val_correct_tokens = 0
-        val_total_tokens = 0
-        val_loss = 0
-
-        with torch.no_grad():
-            for encoder_tensor, decoder_tensor, target_tensor in val_loader:
+    with mlflow.start_run():
+        for epoch in range(epochs):
+            total_loss = 0
+            num_batches = 0
+            train_correct_tokens = 0
+            train_total_tokens = 0
+            for encoder_tensor, decoder_tensor, target_tensor in tqdm(train_loader, desc=f"Epoch {epoch+1}"):
                 encoder_tensor = encoder_tensor.to(device)
                 decoder_tensor = decoder_tensor.to(device)
                 target_tensor = target_tensor.to(device)
 
-                output = model(encoder_tensor, decoder_tensor)
+                output = model(encoder_tensor,decoder_tensor)
 
-                batch_size, seq_len, vocab_size = output.shape
-                output_flat = output.view(batch_size * seq_len, vocab_size)
-                target_flat = target_tensor.view(batch_size * seq_len)
+                batch_size = output.shape[0]
+                token_size = output.shape[1]
+                vocab_size = output.shape[2]
 
-                val_loss += loss_fn(output_flat, target_flat).item()
+                output_flat = output.view(batch_size*token_size, vocab_size)
+                target_flat = target_tensor.view(batch_size * token_size)
+
+                loss = loss_fn(output_flat, target_flat)
+                optimizer.zero_grad()
+                loss.backward()
+                optimizer.step()
 
                 preds = output_flat.argmax(dim=1)
                 mask = target_flat != PAD_ID
-                val_correct_tokens += (preds == target_flat).masked_select(mask).sum().item()
-                val_total_tokens += mask.sum().item()
-        val_accuracy = 100 * val_correct_tokens / val_total_tokens
-        scheduler.step(val_accuracy)
-        avg_val_loss = val_loss / len(val_loader)
-        print(f"Validation Loss: {avg_val_loss:.4f}, Validation Accuracy: {val_accuracy:.2f}%")
-        model.train()
+                train_correct_tokens += (preds == target_flat).masked_select(mask).sum().item()
+                train_total_tokens += mask.sum().item()
+                total_loss += loss.item()
+                num_batches += 1
+            avg_loss = total_loss / num_batches
+            print(f"Epoch {epoch+1}, Average Loss: {avg_loss:.4f}")
+            train_accuracy = 100 * train_correct_tokens / train_total_tokens
+            print(f"Epoch {epoch+1}, Train Loss: {avg_loss:.4f}, Train Accuracy: {train_accuracy:.2f}%")
+            
+            mlflow.log_metric("train_loss", avg_loss, step=epoch)
+            mlflow.log_metric("train_accuracy", train_accuracy, step=epoch)
 
-        if best_accuracy < val_accuracy:
-            best_accuracy = val_accuracy
-            torch.save(model.state_dict(), save_path)
-            print(f"New best model saved with val_accuracy: {best_accuracy:.2f}%")
-            epochs_no_improve = 0
+            model.eval()
+            val_correct_tokens = 0
+            val_total_tokens = 0
+            val_loss = 0
 
-            with open(accuracy_path, 'wb') as f:
-                pickle.dump(best_accuracy, f)
+            with torch.no_grad():
+                for encoder_tensor, decoder_tensor, target_tensor in val_loader:
+                    encoder_tensor = encoder_tensor.to(device)
+                    decoder_tensor = decoder_tensor.to(device)
+                    target_tensor = target_tensor.to(device)
 
-        else:
-            epochs_no_improve+=1
-            if epochs_no_improve >= patience:
-                early_stop = True
-        if early_stop:
-            print("early stop triggered")
-            break
+                    output = model(encoder_tensor, decoder_tensor)
+
+                    batch_size, seq_len, vocab_size = output.shape
+                    output_flat = output.view(batch_size * seq_len, vocab_size)
+                    target_flat = target_tensor.view(batch_size * seq_len)
+
+                    val_loss += loss_fn(output_flat, target_flat).item()
+
+                    preds = output_flat.argmax(dim=1)
+                    mask = target_flat != PAD_ID
+                    val_correct_tokens += (preds == target_flat).masked_select(mask).sum().item()
+                    val_total_tokens += mask.sum().item()
+            val_accuracy = 100 * val_correct_tokens / val_total_tokens
+            scheduler.step(val_accuracy)
+            avg_val_loss = val_loss / len(val_loader)
+            print(f"Validation Loss: {avg_val_loss:.4f}, Validation Accuracy: {val_accuracy:.2f}%")
+            mlflow.log_metric("val_loss", avg_val_loss, step=epoch)
+            mlflow.log_metric("val_accuracy", val_accuracy, step=epoch)
+            model.train()
+
+            if best_accuracy < val_accuracy:
+                best_accuracy = val_accuracy
+                torch.save(model.state_dict(), save_path)
+                print(f"New best model saved with val_accuracy: {best_accuracy:.2f}%")
+                epochs_no_improve = 0
+
+                with open(accuracy_path, 'wb') as f:
+                    pickle.dump(best_accuracy, f)
+
+            else:
+                epochs_no_improve+=1
+                if epochs_no_improve >= patience:
+                    early_stop = True
+            if early_stop:
+                print("early stop triggered")
+                break
 
     torch.save(model.state_dict(),save_path)
     print("finished")
