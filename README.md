@@ -38,6 +38,7 @@ pip install torch tqdm sentencepiece datasets
 ```
 
 ⚙️ Usage
+
 1️⃣ Prepare corpus for BPE training (optional, if you want SentencePiece tokenizer)
 ```bash
 python models/save_corpus.py
@@ -51,8 +52,7 @@ Word-level tokenizer:
 ```bash
 python models/train.py
 ```
-BPE tokenizer:
-Make sure tokenizer.py loads bpe.model correctly.
+BPE tokenizer: Make sure tokenizer.py loads bpe.model correctly.
 
 4️⃣ Inference (generate chatbot replies)
 ```bash
