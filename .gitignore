@@ -4,3 +4,4 @@
 corpus.txt
 *.pth
 data/
+mlruns/

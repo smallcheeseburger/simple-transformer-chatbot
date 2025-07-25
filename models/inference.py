@@ -3,6 +3,7 @@ from transformer_model import transformer
 import torch
 from train import padding
 import sentencepiece as spm
+import time
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
@@ -14,7 +15,7 @@ UNK_ID = sp.piece_to_id('<unk>')
 SOS_ID = sp.piece_to_id('<sos>')
 EOS_ID = sp.piece_to_id('<eos>')
 
-model = transformer(sp.get_piece_size(), embedding_dim=256)
+model = transformer(sp.get_piece_size(), 512, PAD_ID)
 save_path = "./transformer.pth"
 if os.path.exists(save_path):
     model.load_state_dict(torch.load(save_path))
@@ -22,7 +23,8 @@ if os.path.exists(save_path):
 model = model.to(device)
 model.eval()
 
-input_sentence = "Hello world"
+input_sentence = "Can you tell me a joke?"
+start_time = time.time()
 input_index = sp.encode(input_sentence, out_type=int)
 padding_input = padding(input_index, 100)
 
@@ -53,3 +55,6 @@ for step in range(100):
 
 predicted_tokens = sp.decode(generated[1:])
 print("Predicted tokens:", predicted_tokens)
+end_time = time.time()
+latency = (end_time - start_time) * 1000
+print(f"Latency: {latency:.2f} ms")

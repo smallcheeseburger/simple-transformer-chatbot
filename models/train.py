@@ -5,9 +5,9 @@ from transformer_model import transformer
 import os
 from torch.utils.data import DataLoader
 from tqdm import tqdm
-from torch.optim.lr_scheduler import ReduceLROnPlateau
 import pickle
 import mlflow
+import torch.optim.lr_scheduler as lr_scheduler
 
 def padding(index_list, max_len):
     if len(index_list) < max_len:
@@ -67,21 +67,21 @@ if __name__ == "__main__":
 
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     vocab_size = sp.get_piece_size()
-    model = transformer(vocab_size, embedding_dim=256)
+    model = transformer(vocab_size, 512, PAD_ID)
     model = model.to(device)
     optimizer = torch.optim.Adam(model.parameters(), lr=1e-4, weight_decay=1e-4)
-    scheduler = ReduceLROnPlateau(
-    optimizer,
-    mode='max',
-    factor=0.5,
-    patience=2, 
-    verbose=True)
+    scheduler = lr_scheduler.CosineAnnealingWarmRestarts(
+        optimizer,
+        T_0=5,     # 初始周期为5轮
+        T_mult=2,  # 每次周期翻倍
+        eta_min=1e-6  # 最低学习率
+    )
 
     loss_fn = torch.nn.CrossEntropyLoss(
         ignore_index=PAD_ID,
         label_smoothing=0.1 
     )
-    epochs = 30
+    epochs = 100
     save_path = "./transformer.pth"
     if os.path.exists(save_path):
         model.load_state_dict(torch.load(save_path))
@@ -89,12 +89,12 @@ if __name__ == "__main__":
 
     train_loader = DataLoader(
         dataset["train"],
-        batch_size=16,
+        batch_size=8,
         shuffle=True,
         collate_fn=batch
     )
 
-    patience = 3
+    patience = 10
     epochs_no_improve = 0
     early_stop = False
 
@@ -109,7 +109,7 @@ if __name__ == "__main__":
 
     val_loader = DataLoader(
         dataset["validation"],
-        batch_size=16,
+        batch_size=8,
         shuffle=False,
         collate_fn=batch
     )
@@ -137,6 +137,7 @@ if __name__ == "__main__":
                 loss = loss_fn(output_flat, target_flat)
                 optimizer.zero_grad()
                 loss.backward()
+                torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
                 optimizer.step()
 
                 preds = output_flat.argmax(dim=1)
@@ -177,8 +178,8 @@ if __name__ == "__main__":
                     val_correct_tokens += (preds == target_flat).masked_select(mask).sum().item()
                     val_total_tokens += mask.sum().item()
             val_accuracy = 100 * val_correct_tokens / val_total_tokens
-            scheduler.step(val_accuracy)
             avg_val_loss = val_loss / len(val_loader)
+            scheduler.step(epochs)
             print(f"Validation Loss: {avg_val_loss:.4f}, Validation Accuracy: {val_accuracy:.2f}%")
             mlflow.log_metric("val_loss", avg_val_loss, step=epoch)
             mlflow.log_metric("val_accuracy", val_accuracy, step=epoch)
